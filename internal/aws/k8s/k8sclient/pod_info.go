@@ -16,9 +16,13 @@ package k8sclient // import "github.com/open-telemetry/opentelemetry-collector-c
 
 import (
 	v1 "k8s.io/api/core/v1"
+	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type podInfo struct {
-	namespace string
-	phase     v1.PodPhase
+	Namespace      string
+	Phase          v1.PodPhase
+	FullPodName    string
+	PodName        string
+	ObjectMetadata metaV1.ObjectMeta
 }

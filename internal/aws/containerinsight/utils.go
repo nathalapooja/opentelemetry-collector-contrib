@@ -108,6 +108,7 @@ func getPrefixByMetricType(mType string) string {
 	namespace := "namespace_"
 	deployment := "deployment_"
 	daemonSet := "daemonset_"
+	podStatus := "pod_status_"
 
 	switch mType {
 	case TypeInstance:
@@ -130,6 +131,8 @@ func getPrefixByMetricType(mType string) string {
 		prefix = podPrefix
 	case TypePodNet:
 		prefix = podNetPrefix
+	case TypePodPhase:
+		prefix = podStatus
 	case TypeContainer:
 		prefix = containerPrefix
 	case TypeContainerDiskIO:

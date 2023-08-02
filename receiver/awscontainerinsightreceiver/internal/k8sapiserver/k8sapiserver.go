@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	"os"
 	"strconv"
 	"time"
@@ -144,6 +145,45 @@ func (k *K8sAPIServer) getNamespaceMetrics(clusterName, timestampNs string) []pm
 		attributes[ci.Kubernetes] = fmt.Sprintf("{\"namespace_name\":\"%s\"}", namespace)
 		md := ci.ConvertToOTLPMetrics(fields, attributes, k.logger)
 		metrics = append(metrics, md)
+	}
+	return metrics
+}
+
+func (k *K8sAPIServer) getPodPhaseMetrics(clusterName, timestampNs string) []pmetric.Metrics {
+	var metrics []pmetric.Metrics
+	podInfos := k.leaderElection.podClient.PodPhaseInfos()
+	PodPhaseNames := map[corev1.PodPhase]string{
+		corev1.PodPending:   "Pending",
+		corev1.PodRunning:   "Running",
+		corev1.PodSucceeded: "Succeeded",
+		corev1.PodFailed:    "Failed",
+		corev1.PodUnknown:   "Unknown",
+	}
+	for _, podInfo := range podInfos {
+		for phase, phaseName := range PodPhaseNames {
+			metricValue := 0
+			if phase == podInfo.Phase {
+				metricValue = 1
+			}
+			fields := map[string]interface{}{
+				ci.MetricName(ci.TypePodPhase, ci.Phase): metricValue,
+			}
+			attributes := map[string]string{
+				ci.ClusterNameKey: clusterName,
+				ci.MetricType:     ci.TypePodPhase,
+				ci.Timestamp:      timestampNs,
+				ci.K8sNamespace:   podInfo.Namespace,
+				ci.Version:        "0",
+			}
+			if k.nodeName != "" {
+				attributes["NodeName"] = k.nodeName
+			}
+			attributes[ci.SourcesKey] = "[\"apiserver\"]"
+			attributes[ci.Kubernetes] = fmt.Sprintf("{\"namespace_name\":\"%s\"}", podInfo.Namespace)
+			attributes["Phase"] = phaseName
+			md := ci.ConvertToOTLPMetrics(fields, attributes, k.logger)
+			metrics = append(metrics, md)
+		}
 	}
 	return metrics
 }

@@ -31,6 +31,8 @@ import (
 type PodClient interface {
 	// Get the mapping between the namespace and the number of belonging pods
 	NamespaceToRunningPodNum() map[string]int
+
+	PodPhaseInfos() []*podInfo
 }
 
 type podClientOption func(*podClient)
@@ -50,6 +52,7 @@ type podClient struct {
 
 	mu                          sync.RWMutex
 	namespaceToRunningPodNumMap map[string]int
+	podPhaseInfos               []*podInfo
 }
 
 func (c *podClient) NamespaceToRunningPodNum() map[string]int {
@@ -61,23 +64,38 @@ func (c *podClient) NamespaceToRunningPodNum() map[string]int {
 	return c.namespaceToRunningPodNumMap
 }
 
+func (c *podClient) PodPhaseInfos() []*podInfo {
+	if c.store.GetResetRefreshStatus() {
+		c.refresh()
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.podPhaseInfos
+}
+
 func (c *podClient) refresh() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	objsList := c.store.List()
 	namespaceToRunningPodNumMapNew := make(map[string]int)
+	var podPhaseInfosNew []*podInfo
 	for _, obj := range objsList {
-		pod := obj.(*podInfo)
-		if pod.phase == v1.PodRunning {
-			if podNum, ok := namespaceToRunningPodNumMapNew[pod.namespace]; !ok {
-				namespaceToRunningPodNumMapNew[pod.namespace] = 1
-			} else {
-				namespaceToRunningPodNumMapNew[pod.namespace] = podNum + 1
+		if pod, ok := obj.(*podInfo); ok {
+			if pod.Phase == v1.PodRunning {
+				if podNum, ok := namespaceToRunningPodNumMapNew[pod.Namespace]; !ok {
+					namespaceToRunningPodNumMapNew[pod.Namespace] = 1
+				} else {
+					namespaceToRunningPodNumMapNew[pod.Namespace] = podNum + 1
+				}
 			}
+			podPhaseInfosNew = append(podPhaseInfosNew, pod)
 		}
+
 	}
 	c.namespaceToRunningPodNumMap = namespaceToRunningPodNumMapNew
+	c.podPhaseInfos = podPhaseInfosNew
+
 }
 
 func newPodClient(clientSet kubernetes.Interface, logger *zap.Logger, options ...podClientOption) *podClient {
@@ -117,8 +135,10 @@ func transformFuncPod(obj interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("input obj %v is not Pod type", obj)
 	}
 	info := new(podInfo)
-	info.namespace = pod.Namespace
-	info.phase = pod.Status.Phase
+	info.Namespace = pod.Namespace
+	info.Phase = pod.Status.Phase
+	info.PodName = pod.Name
+	info.ObjectMetadata = pod.ObjectMeta
 	return info, nil
 }
 

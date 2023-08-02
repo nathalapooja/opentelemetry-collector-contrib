@@ -114,6 +114,7 @@ const (
 	StatusUnknown                     = "status_unknown"
 	StatusReady                       = "status_ready"
 	StatusScheduled                   = "status_scheduled"
+	Phase                             = "phase"
 
 	RunningPodCount       = "number_of_running_pods"
 	RunningContainerCount = "number_of_running_containers"
@@ -148,6 +149,7 @@ const (
 	TypeNodeDiskIO        = "NodeDiskIO"
 	TypePod               = "Pod"
 	TypePodNet            = "PodNet"
+	TypePodPhase          = "PodPhase"
 	TypeContainer         = "Container"
 	TypeContainerFS       = "ContainerFS"
 	TypeContainerDiskIO   = "ContainerDiskIO"
@@ -260,6 +262,7 @@ func init() {
 		StatusUnknown:              UnitCount,
 		StatusReady:                UnitCount,
 		StatusScheduled:            UnitCount,
+		Phase:                      UnitCount,
 
 		// cluster metrics
 		NodeCount:       UnitCount,

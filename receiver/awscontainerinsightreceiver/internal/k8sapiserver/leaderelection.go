@@ -54,6 +54,7 @@ type LeaderElection struct {
 	podClient        k8sclient.PodClient
 	deploymentClient k8sclient.DeploymentClient
 	daemonSetClient  k8sclient.DaemonSetClient
+	replicaSetClient k8sclient.ReplicaSetClient
 
 	// the following can be set to mocks in testing
 	broadcaster eventBroadcaster
@@ -80,6 +81,7 @@ type K8sClient interface {
 	GetPodClient() k8sclient.PodClient
 	GetDeploymentClient() k8sclient.DeploymentClient
 	GetDaemonSetClient() k8sclient.DaemonSetClient
+	GetReplicaSetClient() k8sclient.ReplicaSetClient
 	ShutdownNodeClient()
 	ShutdownPodClient()
 }

@@ -1,17 +1,5 @@
 // Copyright The OpenTelemetry Authors
-// Portions of this file Copyright 2018-2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package aws // import "github.com/amazon-contributing/opentelemetry-collector-contrib/override/aws"
 
@@ -22,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_IMDSRetryer_ShouldRetry(t *testing.T) {
@@ -81,10 +70,36 @@ func Test_IMDSRetryer_ShouldRetry(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := IMDSRetryer
-			if got := r.ShouldRetry(tt.req); got != tt.want {
+			if got := NewIMDSRetryer(1).ShouldRetry(tt.req); got != tt.want {
 				t.Errorf("ShouldRetry() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNumberOfRetryTest(t *testing.T) {
+	tests := []struct {
+		name                  string
+		expectedRetriesInput  int
+		expectedRetriesOutput int
+	}{
+		{
+			name:                  "expect 0 for 0",
+			expectedRetriesInput:  0,
+			expectedRetriesOutput: 0,
+		},
+		{
+			name:                  "expect 5 for 5",
+			expectedRetriesInput:  5,
+			expectedRetriesOutput: 5,
+		},
+	}
+	for _, tt := range tests {
+		func() {
+			t.Run(tt.name, func(t *testing.T) {
+				newIMDSRetryer := NewIMDSRetryer(tt.expectedRetriesInput)
+				assert.Equal(t, newIMDSRetryer.MaxRetries(), tt.expectedRetriesOutput)
+			})
+		}()
 	}
 }

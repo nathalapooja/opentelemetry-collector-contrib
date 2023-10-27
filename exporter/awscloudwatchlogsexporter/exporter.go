@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package awscloudwatchlogsexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awscloudwatchlogsexporter"
 
@@ -22,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/amazon-contributing/opentelemetry-collector-contrib/extension/awsmiddleware"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/cloudwatchlogs"
 	"github.com/google/uuid"
@@ -63,8 +53,6 @@ func newCwLogsPusher(expConfig *Config, params exp.CreateSettings) (*exporter, e
 		return nil, errors.New("awscloudwatchlogs exporter config is nil")
 	}
 
-	expConfig.logger = params.Logger
-
 	// create AWS session
 	awsConfig, session, err := awsutil.GetAWSConfigSession(params.Logger, &awsutil.Conn{}, &expConfig.AWSSessionSettings)
 	if err != nil {
@@ -72,23 +60,11 @@ func newCwLogsPusher(expConfig *Config, params exp.CreateSettings) (*exporter, e
 	}
 
 	// create CWLogs client with aws session config
-	svcStructuredLog := cwlogs.NewClient(params.Logger, awsConfig, params.BuildInfo, expConfig.LogGroupName, expConfig.LogRetention, session)
+	svcStructuredLog := cwlogs.NewClient(params.Logger, awsConfig, params.BuildInfo, expConfig.LogGroupName, expConfig.LogRetention, expConfig.Tags, session)
 	collectorIdentifier, err := uuid.NewRandom()
-
 	if err != nil {
 		return nil, err
 	}
-
-	pusherKey := cwlogs.PusherKey{
-		LogGroupName:  expConfig.LogGroupName,
-		LogStreamName: expConfig.LogStreamName,
-	}
-
-	pusher := cwlogs.NewPusher(pusherKey, *awsConfig.MaxRetries, *svcStructuredLog, params.Logger)
-
-	pusherMap := make(map[cwlogs.PusherKey]cwlogs.Pusher)
-
-	pusherMap[pusherKey] = pusher
 
 	logsExporter := &exporter{
 		svcStructuredLog: svcStructuredLog,
@@ -96,7 +72,7 @@ func newCwLogsPusher(expConfig *Config, params exp.CreateSettings) (*exporter, e
 		logger:           params.Logger,
 		retryCount:       *awsConfig.MaxRetries,
 		collectorID:      collectorIdentifier.String(),
-		pusherMap:        pusherMap,
+		pusherMap:        make(map[cwlogs.PusherKey]cwlogs.Pusher),
 	}
 	return logsExporter, nil
 }
@@ -115,6 +91,7 @@ func newCwLogsExporter(config component.Config, params exp.CreateSettings) (exp.
 		exporterhelper.WithQueue(expConfig.enforcedQueueSettings()),
 		exporterhelper.WithRetry(expConfig.RetrySettings),
 		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
+		exporterhelper.WithStart(logsPusher.start),
 		exporterhelper.WithShutdown(logsPusher.shutdown),
 	)
 }
@@ -131,7 +108,7 @@ func (e *exporter) consumeLogs(_ context.Context, ld plog.Logs) error {
 			LogGroupName:  logEvent.LogGroupName,
 			LogStreamName: logEvent.LogStreamName,
 		}
-		cwLogsPusher := e.getLogPusher(logEvent)
+		cwLogsPusher := e.getLogPusher(pusherKey)
 		e.logger.Debug("Adding log event", zap.Any("event", logEvent))
 		err := cwLogsPusher.AddLogEntry(logEvent)
 		if err != nil {
@@ -157,18 +134,26 @@ func (e *exporter) consumeLogs(_ context.Context, ld plog.Logs) error {
 	return nil
 }
 
-func (e *exporter) getLogPusher(logEvent *cwlogs.Event) cwlogs.Pusher {
+func (e *exporter) getLogPusher(pusherKey cwlogs.PusherKey) cwlogs.Pusher {
 	e.pusherMapLock.Lock()
 	defer e.pusherMapLock.Unlock()
-	pusherKey := cwlogs.PusherKey{
-		LogGroupName:  logEvent.LogGroupName,
-		LogStreamName: logEvent.LogStreamName,
-	}
 	if e.pusherMap[pusherKey] == nil {
 		pusher := cwlogs.NewPusher(pusherKey, e.retryCount, *e.svcStructuredLog, e.logger)
 		e.pusherMap[pusherKey] = pusher
 	}
 	return e.pusherMap[pusherKey]
+}
+
+func (e *exporter) start(_ context.Context, host component.Host) error {
+	if e.Config.MiddlewareID != nil {
+		awsmiddleware.TryConfigure(e.logger, host, *e.Config.MiddlewareID, awsmiddleware.SDKv1(e.svcStructuredLog.Handlers()))
+	}
+	pusherKey := cwlogs.PusherKey{
+		LogGroupName:  e.Config.LogGroupName,
+		LogStreamName: e.Config.LogStreamName,
+	}
+	_ = e.getLogPusher(pusherKey)
+	return nil
 }
 
 func (e *exporter) shutdown(_ context.Context) error {

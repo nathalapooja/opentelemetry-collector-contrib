@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package k8sapiserver
 
@@ -56,6 +45,7 @@ type mockConsumer struct {
 	t                *testing.T
 	up               *bool
 	httpConnected    *bool
+	relabeled        *bool
 	rpcDurationTotal *bool
 }
 
@@ -65,7 +55,7 @@ func (m mockConsumer) Capabilities() consumer.Capabilities {
 	}
 }
 
-func (m mockConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) error {
+func (m mockConsumer) ConsumeMetrics(_ context.Context, md pmetric.Metrics) error {
 	assert.Equal(m.t, 1, md.ResourceMetrics().Len())
 
 	scopeMetrics := md.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
@@ -74,6 +64,10 @@ func (m mockConsumer) ConsumeMetrics(ctx context.Context, md pmetric.Metrics) er
 		if metric.Name() == "http_connected_total" {
 			assert.Equal(m.t, float64(15), metric.Sum().DataPoints().At(0).DoubleValue())
 			*m.httpConnected = true
+
+			_, relabeled := metric.Sum().DataPoints().At(0).Attributes().Get("kubernetes_port")
+			_, originalLabel := metric.Sum().DataPoints().At(0).Attributes().Get("port")
+			*m.relabeled = relabeled && !originalLabel
 		}
 		if metric.Name() == "rpc_duration_total" {
 			*m.rpcDurationTotal = true
@@ -149,12 +143,14 @@ func TestNewPrometheusScraperEndToEnd(t *testing.T) {
 
 	upPtr := false
 	httpPtr := false
+	relabeledPtr := false
 	rpcDurationTotalPtr := false
 
 	consumer := mockConsumer{
 		t:                t,
 		up:               &upPtr,
 		httpConnected:    &httpPtr,
+		relabeled:        &relabeledPtr,
 		rpcDurationTotal: &rpcDurationTotalPtr,
 	}
 
@@ -202,7 +198,7 @@ func TestNewPrometheusScraperEndToEnd(t *testing.T) {
 		},
 		ScrapeInterval:  cfg.ScrapeConfigs[0].ScrapeInterval,
 		ScrapeTimeout:   cfg.ScrapeConfigs[0].ScrapeInterval,
-		JobName:         fmt.Sprintf("%s/%s", "containerInsightsKubeAPIServerScraper", cfg.ScrapeConfigs[0].MetricsPath),
+		JobName:         fmt.Sprintf("%s/%s", jobName, cfg.ScrapeConfigs[0].MetricsPath),
 		HonorTimestamps: true,
 		Scheme:          "http",
 		MetricsPath:     cfg.ScrapeConfigs[0].MetricsPath,
@@ -216,7 +212,7 @@ func TestNewPrometheusScraperEndToEnd(t *testing.T) {
 							"Version":          model.LabelValue("0"),
 							"Sources":          model.LabelValue("[\"apiserver\"]"),
 							"NodeName":         model.LabelValue("test"),
-							"Type":             model.LabelValue("control_plane"),
+							"Type":             model.LabelValue("ControlPlane"),
 						},
 					},
 				},
@@ -228,6 +224,16 @@ func TestNewPrometheusScraperEndToEnd(t *testing.T) {
 				SourceLabels: model.LabelNames{"__name__"},
 				Regex:        relabel.MustNewRegexp("http_connected_total"),
 				Action:       relabel.Keep,
+			},
+			{
+				// type conflicts with the log Type in the container insights output format
+				Regex:       relabel.MustNewRegexp("^port$"),
+				Replacement: "kubernetes_port",
+				Action:      relabel.LabelMap,
+			},
+			{
+				Regex:  relabel.MustNewRegexp("^port"),
+				Action: relabel.LabelDrop,
 			},
 		},
 	}
@@ -260,5 +266,11 @@ func TestNewPrometheusScraperEndToEnd(t *testing.T) {
 
 	assert.True(t, *consumer.up)
 	assert.True(t, *consumer.httpConnected)
+	assert.True(t, *consumer.relabeled)
 	assert.False(t, *consumer.rpcDurationTotal) // this will get filtered out by our metric relabel config
+}
+
+func TestPrometheusScraperJobName(t *testing.T) {
+	// needs to start with containerInsights
+	assert.True(t, strings.HasPrefix(jobName, "containerInsightsKubeAPIServerScraper"))
 }

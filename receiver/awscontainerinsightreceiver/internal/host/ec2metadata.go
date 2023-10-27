@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package host // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/host"
 
@@ -26,7 +15,7 @@ import (
 )
 
 type metadataClient interface {
-	GetInstanceIdentityDocumentWithContext(ctx context.Context) (awsec2metadata.EC2InstanceIdentityDocument, error)
+	GetInstanceIdentityDocument() (awsec2metadata.EC2InstanceIdentityDocument, error)
 }
 
 type ec2MetadataProvider interface {
@@ -53,10 +42,10 @@ type ec2Metadata struct {
 type ec2MetadataOption func(*ec2Metadata)
 
 func newEC2Metadata(ctx context.Context, session *session.Session, refreshInterval time.Duration,
-	instanceIDReadyC chan bool, instanceIPReadyC chan bool, localMode bool, logger *zap.Logger, options ...ec2MetadataOption) ec2MetadataProvider {
+	instanceIDReadyC chan bool, instanceIPReadyC chan bool, localMode bool, imdsRetries int, logger *zap.Logger, options ...ec2MetadataOption) ec2MetadataProvider {
 	emd := &ec2Metadata{
 		client: awsec2metadata.New(session, &aws.Config{
-			Retryer:                   override.IMDSRetryer,
+			Retryer:                   override.NewIMDSRetryer(imdsRetries),
 			EC2MetadataEnableFallback: aws.Bool(false),
 		}),
 		clientFallbackEnable: awsec2metadata.New(session, &aws.Config{}),
@@ -81,20 +70,16 @@ func newEC2Metadata(ctx context.Context, session *session.Session, refreshInterv
 	return emd
 }
 
-func (emd *ec2Metadata) refresh(ctx context.Context) {
+func (emd *ec2Metadata) refresh(_ context.Context) {
 	if emd.localMode {
 		emd.logger.Debug("Running EC2MetadataProvider in local mode.  Skipping EC2 metadata fetch")
 		return
 	}
 	emd.logger.Info("Fetch instance id and type from ec2 metadata")
 
-	childCtx, cancel := context.WithTimeout(ctx, override.TimePerCall)
-	defer cancel()
-	doc, err := emd.client.GetInstanceIdentityDocumentWithContext(childCtx)
+	doc, err := emd.client.GetInstanceIdentityDocument()
 	if err != nil {
-		contextInner, cancelFnInner := context.WithTimeout(ctx, override.TimePerCall)
-		defer cancelFnInner()
-		docInner, errInner := emd.clientFallbackEnable.GetInstanceIdentityDocumentWithContext(contextInner)
+		docInner, errInner := emd.clientFallbackEnable.GetInstanceIdentityDocument()
 		if errInner != nil {
 			emd.logger.Error("Failed to get ec2 metadata", zap.Error(err))
 			return

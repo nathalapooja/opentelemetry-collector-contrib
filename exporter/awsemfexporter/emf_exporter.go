@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter"
 
@@ -21,8 +10,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/amazon-contributing/opentelemetry-collector-contrib/extension/awsmiddleware"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -37,6 +28,10 @@ const (
 	// OutputDestination Options
 	outputDestinationCloudWatch = "cloudwatch"
 	outputDestinationStdout     = "stdout"
+
+	// AppSignals EMF config
+	appSignalsMetricNamespace    = "AppSignals"
+	appSignalsLogGroupNamePrefix = "/aws/appsignals/"
 )
 
 type emfExporter struct {
@@ -66,7 +61,16 @@ func newEmfExporter(config *Config, set exporter.CreateSettings) (*emfExporter, 
 	}
 
 	// create CWLogs client with aws session config
-	svcStructuredLog := cwlogs.NewClient(set.Logger, awsConfig, set.BuildInfo, config.LogGroupName, config.LogRetention, session)
+	svcStructuredLog := cwlogs.NewClient(set.Logger,
+		awsConfig,
+		set.BuildInfo,
+		config.LogGroupName,
+		config.LogRetention,
+		config.Tags,
+		session,
+		cwlogs.WithEnabledContainerInsights(config.IsEnhancedContainerInsights()),
+		cwlogs.WithEnabledAppSignals(config.IsAppSignalsEnabled()),
+	)
 	collectorIdentifier, err := uuid.NewRandom()
 
 	if err != nil {
@@ -81,6 +85,10 @@ func newEmfExporter(config *Config, set exporter.CreateSettings) (*emfExporter, 
 		collectorID:      collectorIdentifier.String(),
 		pusherMap:        map[cwlogs.PusherKey]cwlogs.Pusher{},
 	}
+
+	config.logger.Warn("the default value for DimensionRollupOption will be changing to NoDimensionRollup" +
+		"in a future release. See https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/23997 for more" +
+		"information")
 
 	return emfExporter, nil
 }
@@ -113,10 +121,22 @@ func (emf *emfExporter) pushMetricsData(_ context.Context, md pmetric.Metrics) e
 
 	for _, groupedMetric := range groupedMetrics {
 		cWMetric := translateGroupedMetricToCWMetric(groupedMetric, emf.config)
-		putLogEvent := translateCWMetricToEMF(cWMetric, emf.config)
+		putLogEvent, err := translateCWMetricToEMF(cWMetric, emf.config)
+		if err != nil {
+			return err
+		}
+		// Drop a nil putLogEvent for EnhancedContainerInsights
+		if emf.config.EnhancedContainerInsights && putLogEvent == nil {
+			emf.config.logger.Debug("Dropping empty putLogEvents for EnhancedContainerInsights")
+			continue
+		}
 		// Currently we only support two options for "OutputDestination".
 		if strings.EqualFold(outputDestination, outputDestinationStdout) {
-			fmt.Println(*putLogEvent.InputLogEvent.Message)
+			if putLogEvent != nil &&
+				putLogEvent.InputLogEvent != nil &&
+				putLogEvent.InputLogEvent.Message != nil {
+				fmt.Println(*putLogEvent.InputLogEvent.Message)
+			}
 		} else if strings.EqualFold(outputDestination, outputDestinationCloudWatch) {
 			logGroup := groupedMetric.metadata.logGroup
 			logStream := groupedMetric.metadata.logStream
@@ -157,7 +177,6 @@ func (emf *emfExporter) pushMetricsData(_ context.Context, md pmetric.Metrics) e
 }
 
 func (emf *emfExporter) getPusher(key cwlogs.PusherKey) cwlogs.Pusher {
-
 	var ok bool
 	if _, ok = emf.pusherMap[key]; !ok {
 		emf.pusherMap[key] = cwlogs.NewPusher(key, emf.retryCnt, *emf.svcStructuredLog, emf.config.logger)
@@ -176,8 +195,15 @@ func (emf *emfExporter) listPushers() []cwlogs.Pusher {
 	return pushers
 }
 
+func (emf *emfExporter) start(_ context.Context, host component.Host) error {
+	if emf.config.MiddlewareID != nil {
+		awsmiddleware.TryConfigure(emf.config.logger, host, *emf.config.MiddlewareID, awsmiddleware.SDKv1(emf.svcStructuredLog.Handlers()))
+	}
+	return nil
+}
+
 // shutdown stops the exporter and is invoked during shutdown.
-func (emf *emfExporter) shutdown(ctx context.Context) error {
+func (emf *emfExporter) shutdown(_ context.Context) error {
 	for _, emfPusher := range emf.listPushers() {
 		returnError := emfPusher.ForceFlush()
 		if returnError != nil {
@@ -188,7 +214,7 @@ func (emf *emfExporter) shutdown(ctx context.Context) error {
 		}
 	}
 
-	return nil
+	return emf.metricTranslator.Shutdown()
 }
 
 func wrapErrorIfBadRequest(err error) error {

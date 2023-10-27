@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package host // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/host"
 
@@ -47,7 +36,7 @@ type Info struct {
 
 	awsSessionCreator   func(*zap.Logger, awsutil.ConnAttr, *awsutil.AWSSessionSettings) (*aws.Config, *session.Session, error)
 	nodeCapacityCreator func(*zap.Logger, ...nodeCapacityOption) (nodeCapacityProvider, error)
-	ec2MetadataCreator  func(context.Context, *session.Session, time.Duration, chan bool, chan bool, bool, *zap.Logger, ...ec2MetadataOption) ec2MetadataProvider
+	ec2MetadataCreator  func(context.Context, *session.Session, time.Duration, chan bool, chan bool, bool, int, *zap.Logger, ...ec2MetadataOption) ec2MetadataProvider
 	ebsVolumeCreator    func(context.Context, *session.Session, string, string, time.Duration, *zap.Logger, ...ebsVolumeOption) ebsVolumeProvider
 	ec2TagsCreator      func(context.Context, *session.Session, string, string, string, time.Duration, *zap.Logger, ...ec2TagsOption) ec2TagsProvider
 }
@@ -98,7 +87,7 @@ func NewInfo(awsSessionSettings awsutil.AWSSessionSettings, containerOrchestrato
 	}
 	mInfo.awsSession = session
 
-	mInfo.ec2Metadata = mInfo.ec2MetadataCreator(ctx, session, refreshInterval, mInfo.instanceIDReadyC, mInfo.instanceIPReadyC, awsSessionSettings.LocalMode, logger)
+	mInfo.ec2Metadata = mInfo.ec2MetadataCreator(ctx, session, refreshInterval, mInfo.instanceIDReadyC, mInfo.instanceIPReadyC, awsSessionSettings.LocalMode, awsSessionSettings.IMDSRetries, logger)
 
 	go mInfo.lazyInitEBSVolume(ctx)
 	go mInfo.lazyInitEC2Tags(ctx)

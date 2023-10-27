@@ -1,21 +1,9 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package proxy // import "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/proxy"
 
 import (
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -80,19 +68,15 @@ var newAWSSession = func(roleArn string, region string, log *zap.Logger) (*sessi
 	return sess, nil
 }
 
-var getEC2Region = func(s *session.Session) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), override.TimePerCall)
-	defer cancel()
+var getEC2Region = func(s *session.Session, imdsRetries int) (string, error) {
 	region, err := ec2metadata.New(s, &aws.Config{
-		Retryer:                   override.IMDSRetryer,
+		Retryer:                   override.NewIMDSRetryer(imdsRetries),
 		EC2MetadataEnableFallback: aws.Bool(false),
-	}).RegionWithContext(ctx)
+	}).Region()
 	if err == nil {
 		return region, err
 	}
-	ctxFallbackEnable, cancelFallbackEnable := context.WithTimeout(context.Background(), override.TimePerCall)
-	defer cancelFallbackEnable()
-	return ec2metadata.New(s, &aws.Config{}).RegionWithContext(ctxFallbackEnable)
+	return ec2metadata.New(s, &aws.Config{}).Region()
 }
 
 func getAWSConfigSession(c *Config, logger *zap.Logger) (*aws.Config, *session.Session, error) {
@@ -119,7 +103,7 @@ func getAWSConfigSession(c *Config, logger *zap.Logger) (*aws.Config, *session.S
 			var sess *session.Session
 			sess, err = session.NewSession()
 			if err == nil {
-				awsRegion, err = getEC2Region(sess)
+				awsRegion, err = getEC2Region(sess, c.IMDSRetries)
 				if err != nil {
 					logger.Debug("Unable to fetch region from EC2 metadata", zap.Error(err))
 				} else {

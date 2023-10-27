@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package awsutil
 
@@ -32,7 +21,7 @@ type mockConn struct {
 	sn *session.Session
 }
 
-func (c *mockConn) getEC2Region(s *session.Session) (string, error) {
+func (c *mockConn) getEC2Region(_ *session.Session, _ int) (string, error) {
 	args := c.Called(nil)
 	errorStr := args.String(0)
 	var err error
@@ -43,7 +32,7 @@ func (c *mockConn) getEC2Region(s *session.Session) (string, error) {
 	return ec2Region, nil
 }
 
-func (c *mockConn) newAWSSession(logger *zap.Logger, roleArn string, region string, profile string, sharedCredentialsFile []string) (*session.Session, error) {
+func (c *mockConn) newAWSSession(_ *zap.Logger, _ *AWSSessionSettings, _ string) (*session.Session, error) {
 	return c.sn, nil
 }
 
@@ -119,11 +108,16 @@ func TestNewAWSSessionWithErr(t *testing.T) {
 	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	t.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "fake")
 	conn := &Conn{}
-	se, err := conn.newAWSSession(logger, roleArn, region, "", nil)
+	aWSSessionSettings := &AWSSessionSettings{
+		RoleARN: roleArn,
+	}
+	se, err := conn.newAWSSession(logger, aWSSessionSettings, region)
 	assert.NotNil(t, err)
 	assert.Nil(t, se)
-	roleArn = ""
-	se, err = conn.newAWSSession(logger, roleArn, region, "", nil)
+	aWSSessionSettings = &AWSSessionSettings{
+		RoleARN: "",
+	}
+	se, err = conn.newAWSSession(logger, aWSSessionSettings, region)
 	assert.NotNil(t, err)
 	assert.Nil(t, se)
 	t.Setenv("AWS_SDK_LOAD_CONFIG", "true")
@@ -132,7 +126,7 @@ func TestNewAWSSessionWithErr(t *testing.T) {
 		Region: aws.String("us-east-1"),
 	})
 	assert.NotNil(t, se)
-	_, err = conn.getEC2Region(se)
+	_, err = conn.getEC2Region(se, aWSSessionSettings.IMDSRetries)
 	assert.NotNil(t, err)
 }
 
@@ -153,7 +147,8 @@ func TestGetSTSCredsFromPrimaryRegionEndpoint(t *testing.T) {
 func TestGetDefaultSession(t *testing.T) {
 	logger := zap.NewNop()
 	t.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "fake")
-	_, err := GetDefaultSession(logger, session.Options{})
+	aWSSessionSettings := &AWSSessionSettings{}
+	_, err := GetDefaultSession(logger, aWSSessionSettings)
 	assert.NotNil(t, err)
 }
 
@@ -161,10 +156,14 @@ func TestGetSTSCreds(t *testing.T) {
 	logger := zap.NewNop()
 	region := "fake_region"
 	roleArn := ""
-	_, err := getSTSCreds(logger, region, roleArn)
+	aWSSessionSettings := &AWSSessionSettings{
+		RoleARN: roleArn,
+	}
+	creds, err := getSTSCreds(logger, region, aWSSessionSettings)
+	assert.NotNil(t, creds)
 	assert.Nil(t, err)
 	t.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "fake")
-	_, err = getSTSCreds(logger, region, roleArn)
+	_, err = getSTSCreds(logger, region, aWSSessionSettings)
 	assert.NotNil(t, err)
 }
 

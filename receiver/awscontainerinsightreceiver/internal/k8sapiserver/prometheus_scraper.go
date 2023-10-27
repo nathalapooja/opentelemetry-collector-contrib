@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package k8sapiserver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/awscontainerinsightreceiver/internal/k8sapiserver"
 
@@ -39,18 +28,31 @@ import (
 const (
 	caFile             = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	collectionInterval = 60 * time.Second
+	// needs to start with "containerInsightsKubeAPIServerScraper" for histogram deltas in the emf exporter
+	jobName = "containerInsightsKubeAPIServerScraper"
 )
 
 var (
 	controlPlaneMetricAllowList = []string{
-		"apiserver_storage_oapiserver_storage_objectsbjects",
-		"apiserver_request_total",
-		"apiserver_request_duration_seconds.*",
-		"apiserver_admission_controller_admission_duration_seconds.*",
-		"rest_client_request_duration_seconds.*",
-		"rest_client_requests_total",
-		"etcd_request_duration_seconds.*",
-		"etcd_db_total_size_in_bytes.*",
+		"^apiserver_admission_controller_admission_duration_seconds_(bucket|sum|count)$",
+		"^apiserver_admission_step_admission_duration_seconds_(bucket|sum|count)$",
+		"^apiserver_admission_webhook_admission_duration_seconds_(bucket|sum|count)$",
+		"^apiserver_current_inflight_requests$",
+		"^apiserver_current_inqueue_requests$",
+		"^apiserver_flowcontrol_rejected_requests_total$",
+		"^apiserver_flowcontrol_request_concurrency_limit$",
+		"^apiserver_longrunning_requests$",
+		"^apiserver_request_duration_seconds_(bucket|sum|count)$",
+		"^apiserver_request_total$",
+		"^apiserver_requested_deprecated_apis$",
+		"^apiserver_storage_list_duration_seconds_(bucket|sum|count)$",
+		"^apiserver_storage_objects$",
+		"^apiserver_storage_db_total_size_in_bytes$",
+		"^apiserver_storage_size_bytes$",
+		"^etcd_db_total_size_in_bytes$",
+		"^etcd_request_duration_seconds_(bucket|sum|count)$",
+		"^rest_client_request_duration_seconds_(bucket|sum|count)$",
+		"^rest_client_requests_total$",
 	}
 )
 
@@ -104,7 +106,7 @@ func NewPrometheusScraper(opts PrometheusScraperOpts) (*PrometheusScraper, error
 		},
 		ScrapeInterval:  model.Duration(collectionInterval),
 		ScrapeTimeout:   model.Duration(collectionInterval),
-		JobName:         fmt.Sprintf("%s/%s", "containerInsightsKubeAPIServerScraper", opts.Endpoint),
+		JobName:         fmt.Sprintf("%s/%s", jobName, opts.Endpoint),
 		HonorTimestamps: true,
 		Scheme:          "https",
 		MetricsPath:     "/metrics",
@@ -118,7 +120,7 @@ func NewPrometheusScraper(opts PrometheusScraperOpts) (*PrometheusScraper, error
 							"Version":          model.LabelValue("0"),
 							"Sources":          model.LabelValue("[\"apiserver\"]"),
 							"NodeName":         model.LabelValue(os.Getenv("HOST_NAME")),
-							"Type":             model.LabelValue("control_plane"),
+							"Type":             model.LabelValue("ControlPlane"),
 						},
 					},
 				},
@@ -130,6 +132,16 @@ func NewPrometheusScraper(opts PrometheusScraperOpts) (*PrometheusScraper, error
 				SourceLabels: model.LabelNames{"__name__"},
 				Regex:        relabel.MustNewRegexp(controlPlaneMetricsAllowRegex),
 				Action:       relabel.Keep,
+			},
+			// type conflicts with the log Type in the container insights output format, it needs to be replaced and dropped
+			{
+				Regex:       relabel.MustNewRegexp("^type$"),
+				Replacement: "kubernetes_type",
+				Action:      relabel.LabelMap,
+			},
+			{
+				Regex:  relabel.MustNewRegexp("^type$"),
+				Action: relabel.LabelDrop,
 			},
 		},
 	}

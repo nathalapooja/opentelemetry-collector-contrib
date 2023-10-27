@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter"
 
@@ -33,12 +22,12 @@ const (
 	summarySumSuffix   = "_sum"
 )
 
-var (
-	deltaMetricCalculator   = aws.NewFloat64DeltaCalculator()
-	summaryMetricCalculator = aws.NewMetricCalculator(calculateSummaryDelta)
-)
+type emfCalculators struct {
+	delta   aws.MetricCalculator
+	summary aws.MetricCalculator
+}
 
-func calculateSummaryDelta(prev *aws.MetricValue, val interface{}, timestampMs time.Time) (interface{}, bool) {
+func calculateSummaryDelta(prev *aws.MetricValue, val interface{}, _ time.Time) (interface{}, bool) {
 	metricEntry := val.(summaryMetricEntry)
 	summaryDelta := metricEntry.sum
 	countDelta := metricEntry.count
@@ -71,7 +60,7 @@ type dataPoints interface {
 	// dataPoint: the adjusted data point
 	// retained: indicates whether the data point is valid for further process
 	// NOTE: It is an expensive call as it calculates the metric value.
-	CalculateDeltaDatapoints(i int, instrumentationScopeName string, detailedMetrics bool) (dataPoint []dataPoint, retained bool)
+	CalculateDeltaDatapoints(i int, instrumentationScopeName string, detailedMetrics bool, calculators *emfCalculators) (dataPoint []dataPoint, retained bool)
 }
 
 // deltaMetricMetadata contains the metadata required to perform rate/delta calculation
@@ -92,15 +81,11 @@ type numberDataPointSlice struct {
 
 // histogramDataPointSlice is a wrapper for pmetric.HistogramDataPointSlice
 type histogramDataPointSlice struct {
-	// Todo:(khanhntd) Calculate delta value for count and sum value with histogram
-	// https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/18245
 	deltaMetricMetadata
 	pmetric.HistogramDataPointSlice
 }
 
 type exponentialHistogramDataPointSlice struct {
-	// TODO: Calculate delta value for count and sum value with exponential histogram
-	// https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/18245
 	deltaMetricMetadata
 	pmetric.ExponentialHistogramDataPointSlice
 }
@@ -117,7 +102,7 @@ type summaryMetricEntry struct {
 }
 
 // CalculateDeltaDatapoints retrieves the NumberDataPoint at the given index and performs rate/delta calculation if necessary.
-func (dps numberDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationScopeName string, detailedMetrics bool) ([]dataPoint, bool) {
+func (dps numberDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationScopeName string, _ bool, calculators *emfCalculators) ([]dataPoint, bool) {
 	metric := dps.NumberDataPointSlice.At(i)
 	labels := createLabels(metric.Attributes(), instrumentationScopeName)
 	timestampMs := unixNanoToMilliseconds(metric.Timestamp())
@@ -135,7 +120,7 @@ func (dps numberDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationS
 	if dps.adjustToDelta {
 		var deltaVal interface{}
 		mKey := aws.NewKey(dps.deltaMetricMetadata, labels)
-		deltaVal, retained = deltaMetricCalculator.Calculate(mKey, metricVal, metric.Timestamp().AsTime())
+		deltaVal, retained = calculators.delta.Calculate(mKey, metricVal, metric.Timestamp().AsTime())
 
 		// If a delta to the previous data point could not be computed use the current metric value instead
 		if !retained && dps.retainInitialValueForDelta {
@@ -157,16 +142,40 @@ func (dps numberDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationS
 }
 
 // CalculateDeltaDatapoints retrieves the HistogramDataPoint at the given index.
-func (dps histogramDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationScopeName string, detailedMetrics bool) ([]dataPoint, bool) {
+func (dps histogramDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationScopeName string, _ bool, calculators *emfCalculators) ([]dataPoint, bool) {
 	metric := dps.HistogramDataPointSlice.At(i)
 	labels := createLabels(metric.Attributes(), instrumentationScopeName)
 	timestamp := unixNanoToMilliseconds(metric.Timestamp())
 
+	sum := metric.Sum()
+	count := metric.Count()
+
+	var datapoints []dataPoint
+
+	if dps.adjustToDelta {
+		var delta interface{}
+		mKey := aws.NewKey(dps.deltaMetricMetadata, labels)
+		delta, retained := calculators.summary.Calculate(mKey, summaryMetricEntry{sum, count}, metric.Timestamp().AsTime())
+
+		// If a delta to the previous data point could not be computed use the current metric value instead
+		if !retained && dps.retainInitialValueForDelta {
+			retained = true
+			delta = summaryMetricEntry{sum, count}
+		}
+
+		if !retained {
+			return datapoints, retained
+		}
+		summaryMetricDelta := delta.(summaryMetricEntry)
+		sum = summaryMetricDelta.sum
+		count = summaryMetricDelta.count
+	}
+
 	return []dataPoint{{
 		name: dps.metricName,
 		value: &cWMetricStats{
-			Count: metric.Count(),
-			Sum:   metric.Sum(),
+			Count: count,
+			Sum:   sum,
 			Max:   metric.Max(),
 			Min:   metric.Min(),
 		},
@@ -176,7 +185,7 @@ func (dps histogramDataPointSlice) CalculateDeltaDatapoints(i int, instrumentati
 }
 
 // CalculateDeltaDatapoints retrieves the ExponentialHistogramDataPoint at the given index.
-func (dps exponentialHistogramDataPointSlice) CalculateDeltaDatapoints(idx int, instrumentationScopeName string, _ bool) ([]dataPoint, bool) {
+func (dps exponentialHistogramDataPointSlice) CalculateDeltaDatapoints(idx int, instrumentationScopeName string, _ bool, _ *emfCalculators) ([]dataPoint, bool) {
 	metric := dps.ExponentialHistogramDataPointSlice.At(idx)
 
 	scale := metric.Scale()
@@ -258,7 +267,7 @@ func (dps exponentialHistogramDataPointSlice) CalculateDeltaDatapoints(idx int, 
 }
 
 // CalculateDeltaDatapoints retrieves the SummaryDataPoint at the given index and perform calculation with sum and count while retain the quantile value.
-func (dps summaryDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationScopeName string, detailedMetrics bool) ([]dataPoint, bool) {
+func (dps summaryDataPointSlice) CalculateDeltaDatapoints(i int, instrumentationScopeName string, detailedMetrics bool, calculators *emfCalculators) ([]dataPoint, bool) {
 	metric := dps.SummaryDataPointSlice.At(i)
 	labels := createLabels(metric.Attributes(), instrumentationScopeName)
 	timestampMs := unixNanoToMilliseconds(metric.Timestamp())
@@ -272,7 +281,7 @@ func (dps summaryDataPointSlice) CalculateDeltaDatapoints(i int, instrumentation
 	if dps.adjustToDelta {
 		var delta interface{}
 		mKey := aws.NewKey(dps.deltaMetricMetadata, labels)
-		delta, retained = summaryMetricCalculator.Calculate(mKey, summaryMetricEntry{sum, count}, metric.Timestamp().AsTime())
+		delta, retained = calculators.summary.Calculate(mKey, summaryMetricEntry{sum, count}, metric.Timestamp().AsTime())
 
 		// If a delta to the previous data point could not be computed use the current metric value instead
 		if !retained && dps.retainInitialValueForDelta {
@@ -344,6 +353,7 @@ func getDataPoints(pmd pmetric.Metric, metadata cWMetricMetadata, logger *zap.Lo
 
 	var dps dataPoints
 
+	//exhaustive:enforce
 	switch pmd.Type() {
 	case pmetric.MetricTypeGauge:
 		metric := pmd.Gauge()
@@ -360,6 +370,8 @@ func getDataPoints(pmd pmetric.Metric, metadata cWMetricMetadata, logger *zap.Lo
 		}
 	case pmetric.MetricTypeHistogram:
 		metric := pmd.Histogram()
+		// the prometheus histograms from the container insights should be adjusted for delta
+		metricMetadata.adjustToDelta = metadata.receiver == containerInsightsReceiver
 		dps = histogramDataPointSlice{
 			metricMetadata,
 			metric.DataPoints(),
@@ -378,7 +390,7 @@ func getDataPoints(pmd pmetric.Metric, metadata cWMetricMetadata, logger *zap.Lo
 		// attribute processor) from resource metrics. If it exists, and equals to prometheus, the sum and count will be
 		// converted.
 		// For more information: https://github.com/open-telemetry/opentelemetry-collector/blob/main/receiver/prometheusreceiver/DESIGN.md#summary
-		metricMetadata.adjustToDelta = metadata.receiver == prometheusReceiver
+		metricMetadata.adjustToDelta = metadata.receiver == prometheusReceiver || metadata.receiver == containerInsightsReceiver
 		dps = summaryDataPointSlice{
 			metricMetadata,
 			metric.DataPoints(),

@@ -1,26 +1,16 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter"
 
 import (
-	"errors"
+	"strings"
 
 	"go.opentelemetry.io/collector/component"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/awsutil"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/cwlogs"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/resourcetotelemetry"
 )
 
@@ -59,6 +49,11 @@ type Config struct {
 	// Possible values are 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 2192, 2557, 2922, 3288, or 3653
 	LogRetention int64 `mapstructure:"log_retention"`
 
+	// Tags is the option to set tags for the CloudWatch Log Group.  If specified, please add at most 50 tags.  Input is a string to string map like so: { 'key': 'value' }
+	// Keys must be between 1-128 characters and follow the regex pattern: ^([\p{L}\p{Z}\p{N}_.:/=+\-@]+)$
+	// Values must be between 1-256 characters and follow the regex pattern: ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$
+	Tags map[string]*string `mapstructure:"tags,omitempty"`
+
 	// ParseJSONEncodedAttributeValues is an array of attribute keys whose corresponding values are JSON-encoded as strings.
 	// Those strings will be decoded to its original json structure.
 	ParseJSONEncodedAttributeValues []string `mapstructure:"parse_json_encoded_attr_values"`
@@ -75,10 +70,13 @@ type Config struct {
 	// TODO: we can support directing output to a file (in the future) while customer specifies a file path here.
 	OutputDestination string `mapstructure:"output_destination"`
 
-	// EKSFargateContainerInsightsEnabled is an option to reformat certin metric labels so that they take the form of a high level object
+	// EKSFargateContainerInsightsEnabled is an option to reformat certain metric labels so that they take the form of a high level object
 	// The end result will make the labels look like those coming out of ECS and be more easily injected into cloudwatch
 	// Note that at the moment in order to use this feature the value "kubernetes" must also be added to the ParseJSONEncodedAttributeValues array in order to be used
 	EKSFargateContainerInsightsEnabled bool `mapstructure:"eks_fargate_container_insights_enabled"`
+
+	// EnhancedContainerInsights indicates payloads will include enhanced container insights metrics
+	EnhancedContainerInsights bool `mapstructure:"enhanced_container_insights"`
 
 	// DisableMetricExtraction is an option to disable the extraction of metrics from the EMF logs.
 	// Setting this to true essentially skips generating and setting the _aws / CloudWatchMetrics section of the EMF log, thus effectively
@@ -98,6 +96,9 @@ type Config struct {
 	// https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch_Embedded_Metric_Format_Specification.html#CloudWatch_Embedded_Metric_Format_Specification_structure
 	// Otherwise, sending metrics as Embedded Metric Format version 0 (without "_aws")
 	Version string `mapstructure:"version"`
+
+	// MiddlewareID is an ID for an extension that can be used to configure the AWS client.
+	MiddlewareID *component.ID `mapstructure:"middleware,omitempty"`
 
 	// logger is the Logger used for writing error/warning logs
 	logger *zap.Logger
@@ -141,41 +142,26 @@ func (config *Config) Validate() error {
 	}
 	config.MetricDescriptors = validDescriptors
 
-	if !isValidRetentionValue(config.LogRetention) {
-		return errors.New("invalid value for retention policy.  Please make sure to use the following values: 0 (Never Expire), 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 2192, 2557, 2922, 3288, or 3653")
+	if retErr := cwlogs.ValidateRetentionValue(config.LogRetention); retErr != nil {
+		return retErr
 	}
 
-	return nil
+	return cwlogs.ValidateTagsInput(config.Tags)
 }
 
-// Added function to check if value is an accepted number of log retention days
-func isValidRetentionValue(input int64) bool {
-	switch input {
-	case
-		0,
-		1,
-		3,
-		5,
-		7,
-		14,
-		30,
-		60,
-		90,
-		120,
-		150,
-		180,
-		365,
-		400,
-		545,
-		731,
-		1827,
-		2192,
-		2557,
-		2922,
-		3288,
-		3653:
+func (config *Config) IsEnhancedContainerInsights() bool {
+	return config.EnhancedContainerInsights && !config.DisableMetricExtraction
+}
+
+func (config *Config) IsAppSignalsEnabled() bool {
+	if config.LogGroupName == "" || config.Namespace == "" {
+		return false
+	}
+
+	if config.Namespace == appSignalsMetricNamespace && strings.HasPrefix(config.LogGroupName, appSignalsLogGroupNamePrefix) {
 		return true
 	}
+
 	return false
 }
 

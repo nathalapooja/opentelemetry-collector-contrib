@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package awsemfexporter // import "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/awsemfexporter"
 
@@ -18,12 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/cwlogs"
+	aws "github.com/open-telemetry/opentelemetry-collector-contrib/internal/aws/metrics"
 )
 
 const (
@@ -36,6 +28,7 @@ const (
 	singleDimensionRollupOnly    = "SingleDimensionRollupOnly"
 
 	prometheusReceiver        = "prometheus"
+	containerInsightsReceiver = "awscontainerinsight"
 	attributeReceiver         = "receiver"
 	fieldPrometheusMetricType = "prom_metric_type"
 )
@@ -96,6 +89,7 @@ type cWMetricMetadata struct {
 
 type metricTranslator struct {
 	metricDescriptor map[string]MetricDescriptor
+	calculators      *emfCalculators
 }
 
 func newMetricTranslator(config Config) metricTranslator {
@@ -105,7 +99,18 @@ func newMetricTranslator(config Config) metricTranslator {
 	}
 	return metricTranslator{
 		metricDescriptor: mt,
+		calculators: &emfCalculators{
+			delta:   aws.NewFloat64DeltaCalculator(),
+			summary: aws.NewMetricCalculator(calculateSummaryDelta),
+		},
 	}
+}
+
+func (mt metricTranslator) Shutdown() error {
+	var errs error
+	errs = multierr.Append(errs, mt.calculators.delta.Shutdown())
+	errs = multierr.Append(errs, mt.calculators.summary.Shutdown())
+	return errs
 }
 
 // translateOTelToGroupedMetric converts OT metrics to Grouped Metric format.
@@ -114,12 +119,21 @@ func (mt metricTranslator) translateOTelToGroupedMetric(rm pmetric.ResourceMetri
 	var instrumentationScopeName string
 	cWNamespace := getNamespace(rm, config.Namespace)
 	logGroup, logStream, patternReplaceSucceeded := getLogInfo(rm, cWNamespace, config)
+	deltaInitialValue := config.RetainInitialValueOfDeltaMetric
 
 	ilms := rm.ScopeMetrics()
 	var metricReceiver string
 	if receiver, ok := rm.Resource().Attributes().Get(attributeReceiver); ok {
 		metricReceiver = receiver.Str()
 	}
+
+	if serviceName, ok := rm.Resource().Attributes().Get("service.name"); ok {
+		if strings.HasPrefix(serviceName.Str(), "containerInsightsKubeAPIServerScraper") {
+			// the prometheus metrics that come from the container insight receiver need to be clearly tagged as coming from container insights
+			metricReceiver = containerInsightsReceiver
+		}
+	}
+
 	for j := 0; j < ilms.Len(); j++ {
 		ilm := ilms.At(j)
 		if ilm.Scope().Name() != "" {
@@ -131,16 +145,17 @@ func (mt metricTranslator) translateOTelToGroupedMetric(rm pmetric.ResourceMetri
 			metric := metrics.At(k)
 			metadata := cWMetricMetadata{
 				groupedMetricMetadata: groupedMetricMetadata{
-					namespace:      cWNamespace,
-					timestampMs:    timestamp,
-					logGroup:       logGroup,
-					logStream:      logStream,
-					metricDataType: metric.Type(),
+					namespace:                  cWNamespace,
+					timestampMs:                timestamp,
+					logGroup:                   logGroup,
+					logStream:                  logStream,
+					metricDataType:             metric.Type(),
+					retainInitialValueForDelta: deltaInitialValue,
 				},
 				instrumentationScopeName: instrumentationScopeName,
 				receiver:                 metricReceiver,
 			}
-			err := addToGroupedMetric(metric, groupedMetrics, metadata, patternReplaceSucceeded, config.logger, mt.metricDescriptor, config)
+			err := addToGroupedMetric(metric, groupedMetrics, metadata, patternReplaceSucceeded, config.logger, mt.metricDescriptor, config, mt.calculators)
 			if err != nil {
 				return err
 			}
@@ -349,7 +364,7 @@ func groupedMetricToCWMeasurementsWithFilters(groupedMetric *groupedMetric, conf
 }
 
 // translateCWMetricToEMF converts CloudWatch Metric format to EMF.
-func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) *cwlogs.Event {
+func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) (*cwlogs.Event, error) {
 	// convert CWMetric into map format for compatible with PLE input
 	fieldMap := cWMetric.fields
 
@@ -426,11 +441,39 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) *cwlogs.Event {
 			*/
 			fieldMap["CloudWatchMetrics"] = cWMetric.measurements
 		}
+	} else if len(cWMetric.measurements) < 1 && config.EnhancedContainerInsights {
+		// Return nil if requests does not contain metrics when EnhancedContainerInsights is enabled
+		return nil, nil
+	}
+
+	// remove metrics from fieldMap
+	metricsMap := make(map[string]interface{})
+	for _, measurement := range cWMetric.measurements {
+		for _, metric := range measurement.Metrics {
+			metricName, exist := metric["Name"]
+			if exist {
+				v, ok := fieldMap[metricName]
+				if ok {
+					metricsMap[metricName] = v
+					delete(fieldMap, metricName)
+				}
+			}
+		}
 	}
 
 	pleMsg, err := json.Marshal(fieldMap)
 	if err != nil {
-		return nil
+		return nil, err
+	}
+
+	// append metrics json to pleMsg
+	if len(metricsMap) > 0 {
+		metricsMsg, err := json.Marshal(metricsMap)
+		if err != nil {
+			return nil, err
+		}
+		metricsMsg[0] = ','
+		pleMsg = append(pleMsg[:len(pleMsg)-1], metricsMsg...)
 	}
 
 	metricCreationTime := cWMetric.timestampMs
@@ -440,5 +483,5 @@ func translateCWMetricToEMF(cWMetric *cWMetrics, config *Config) *cwlogs.Event {
 	)
 	logEvent.GeneratedTime = time.Unix(0, metricCreationTime*int64(time.Millisecond))
 
-	return logEvent
+	return logEvent, nil
 }

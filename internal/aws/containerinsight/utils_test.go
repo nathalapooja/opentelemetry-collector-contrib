@@ -827,7 +827,7 @@ func TestConvertToOTLPMetricsForPodContainerStatusMetrics(t *testing.T) {
 	now := time.Now()
 	timestamp := strconv.FormatInt(now.UnixNano(), 10)
 
-	// test pod network metrics
+	// test pod container status metrics
 	fields = map[string]interface{}{
 		"pod_container_status_running":                                      1,
 		"pod_container_status_terminated":                                   0,

@@ -45,6 +45,7 @@ func processContainers(cInfos []*cInfo.ContainerInfo, mInfo extractors.CPUMemInf
 	// first iteration of container infos processes individual container info and
 	// gather pod related info for the second iteration which generate pod metric
 	for _, info := range cInfos {
+		logger.Info("ContainerInfoProcessor:", *info)
 		if len(info.Stats) == 0 {
 			continue
 		}

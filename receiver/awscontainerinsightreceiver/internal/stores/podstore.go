@@ -428,6 +428,19 @@ func (p *PodStore) decorateCPU(metric CIMetric, pod *corev1.Pod) {
 						}
 					}
 				}
+				for _, containerSpec := range pod.Spec.InitContainers {
+					if containerSpec.Name == containerName {
+						if containerCPULimit, ok := getLimitForContainer(cpuKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPULimit), containerCPULimit)
+							if p.includeEnhancedMetrics {
+								metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPUUtilizationOverContainerLimit), containerCPUTotal.(float64)/float64(containerCPULimit)*100)
+							}
+						}
+						if containerCPUReq, ok := getRequestForContainer(cpuKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.CPURequest), containerCPUReq)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -465,6 +478,19 @@ func (p *PodStore) decorateMem(metric CIMetric, pod *corev1.Pod) {
 			containerMemWorkingset := metric.GetField(memWorkingsetMetric)
 			if containerName := metric.GetTag(ci.ContainerNamekey); containerName != "" {
 				for _, containerSpec := range pod.Spec.Containers {
+					if containerSpec.Name == containerName {
+						if containerMemLimit, ok := getLimitForContainer(memoryKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemLimit), containerMemLimit)
+							if p.includeEnhancedMetrics {
+								metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemUtilizationOverContainerLimit), float64(containerMemWorkingset.(uint64))/float64(containerMemLimit)*100)
+							}
+						}
+						if containerMemReq, ok := getRequestForContainer(memoryKey, containerSpec); ok {
+							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemRequest), containerMemReq)
+						}
+					}
+				}
+				for _, containerSpec := range pod.Spec.InitContainers {
 					if containerSpec.Name == containerName {
 						if containerMemLimit, ok := getLimitForContainer(memoryKey, containerSpec); ok {
 							metric.AddField(ci.MetricName(ci.TypeContainer, ci.MemLimit), containerMemLimit)

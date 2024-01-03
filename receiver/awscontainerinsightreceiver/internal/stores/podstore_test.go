@@ -486,6 +486,40 @@ func TestPodStore_decorateCpu_WithInitContainersAndPodOverhead(t *testing.T) {
 	assert.Equal(t, 0.625, metric.GetField("pod_cpu_reserved_capacity").(float64))
 	assert.Equal(t, float64(4), metric.GetField("pod_cpu_utilization_over_pod_limit").(float64))
 	assert.Equal(t, float64(1), metric.GetField("pod_cpu_usage_total").(float64))
+
+	// test Side car container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper1"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.CPUTotal): float64(1)}
+	metric = generateMetric(fields, tags)
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, uint64(5), metric.GetField("container_cpu_request").(uint64))
+	assert.Equal(t, uint64(5), metric.GetField("container_cpu_limit").(uint64))
+	assert.Equal(t, float64(1), metric.GetField("container_cpu_usage_total").(float64))
+	assert.False(t, metric.HasField("container_cpu_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, float64(20), metric.GetField("container_cpu_utilization_over_container_limit").(float64))
+
+	// test init container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper2"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.CPUTotal): float64(3)}
+
+	podStore.includeEnhancedMetrics = false
+	metric = generateMetric(fields, tags)
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, uint64(15), metric.GetField("container_cpu_request").(uint64))
+	assert.Equal(t, uint64(15), metric.GetField("container_cpu_limit").(uint64))
+	assert.Equal(t, float64(3), metric.GetField("container_cpu_usage_total").(float64))
+	assert.False(t, metric.HasField("container_cpu_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, float64(20), metric.GetField("container_cpu_utilization_over_container_limit").(float64))
 }
 
 func TestPodStore_decorateMem(t *testing.T) {
@@ -541,6 +575,42 @@ func TestPodStore_decorateMem_WithInitContainersAndPodOverhead(t *testing.T) {
 	assert.Equal(t, 26.25, metric.GetField("pod_memory_reserved_capacity").(float64))
 	assert.Equal(t, 9.523809523809524, metric.GetField("pod_memory_utilization_over_pod_limit").(float64))
 	assert.Equal(t, uint64(10*1024*1024), metric.GetField("pod_memory_working_set").(uint64))
+
+	//Test Side Car Container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper1"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.MemWorkingset): uint64(10 * 1024 * 1024)}
+
+	metric = generateMetric(fields, tags)
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, uint64(52428800), metric.GetField("container_memory_request").(uint64))
+	assert.Equal(t, uint64(52428800), metric.GetField("container_memory_limit").(uint64))
+	assert.Equal(t, uint64(10*1024*1024), metric.GetField("container_memory_working_set").(uint64))
+	assert.False(t, metric.HasField("container_memory_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, float64(20), metric.GetField("container_memory_utilization_over_container_limit").(float64))
+
+	// test init container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper2"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.MemWorkingset): uint64(10 * 1024 * 1024)}
+
+	podStore.includeEnhancedMetrics = false
+	metric = generateMetric(fields, tags)
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, uint64(26214400), metric.GetField("container_memory_request").(uint64))
+	assert.Equal(t, uint64(26214400), metric.GetField("container_memory_limit").(uint64))
+	assert.Equal(t, uint64(10*1024*1024), metric.GetField("container_memory_working_set").(uint64))
+	assert.False(t, metric.HasField("container_memory_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, float64(40), metric.GetField("container_memory_utilization_over_container_limit").(float64))
+
 }
 
 func TestPodStore_previousCleanupLocking(_ *testing.T) {

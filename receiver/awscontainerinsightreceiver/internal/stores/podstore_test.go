@@ -190,7 +190,7 @@ func getBaseTestPodInfo() *corev1.Pod {
 	return &pods.Items[0]
 }
 
-func getInitContainerBaseTestPodInfo() *corev1.Pod {
+func getInitAndSideCarContainerTestPodInfo() *corev1.Pod {
 	podJSON := `
 {
   "kind": "PodList",
@@ -407,6 +407,222 @@ func getInitContainerBaseTestPodInfo() *corev1.Pod {
 	return &pods.Items[0]
 }
 
+func getInitWithoutSideCarContainerPodInfo() *corev1.Pod {
+	podJSON := `
+{
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "metadata": {
+  },
+  "items": [
+    {
+      "metadata": {
+        "name": "cpu-limit",
+        "namespace": "default",
+        "ownerReferences": [
+            {
+                "apiVersion": "apps/v1",
+                "blockOwnerDeletion": true,
+                "controller": true,
+                "kind": "DaemonSet",
+                "name": "DaemonSetTest",
+                "uid": "36779a62-4aca-11e9-977b-0672b6c6fc94"
+            }
+        ],
+        "selfLink": "/api/v1/namespaces/default/pods/cpu-limit",
+        "uid": "764d01e1-2a2f-11e9-95ea-0a695d7ce286",
+        "resourceVersion": "5671573",
+        "creationTimestamp": "2019-02-06T16:51:34Z",
+        "labels": {
+          "app": "hello_test"
+        },
+        "annotations": {
+          "kubernetes.io/config.seen": "2019-02-19T00:06:56.109155665Z",
+          "kubernetes.io/config.source": "api"
+        }
+      },
+      "spec": {
+        "volumes": [
+          {
+            "name": "default-token-tlgw7",
+            "secret": {
+              "secretName": "default-token-tlgw7",
+              "defaultMode": 420
+            }
+          }
+        ],
+		"initContainers": [
+          {
+            "name": "logshipper1",
+            "image": "alpine:latest",
+            "command": [
+              "sh",
+              "-c",
+              "tail -F /opt/logs.txt"
+            ],
+            "resources": {
+              "limits": {
+                "cpu": "5m",
+                "memory": "50Mi"
+              },
+              "requests": {
+                "cpu": "5m",
+                "memory": "50Mi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "data",
+                "mountPath": "/opt"
+              }
+            ]
+          },
+          {
+            "name": "logshipper2",
+            "image": "alpine:latest",
+            "command": [
+              "sh",
+              "-c",
+              "tail -F /opt/logs.txt"
+            ],
+            "resources": {
+              "limits": {
+                "cpu": "15m",
+                "memory": "75Mi"
+              },
+              "requests": {
+                "cpu": "15m",
+                "memory": "75Mi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "data",
+                "mountPath": "/opt"
+              }
+            ]
+          }
+        ],
+        "containers": [
+          {
+            "name": "ubuntu",
+            "image": "ubuntu",
+            "command": [
+              "/bin/bash"
+            ],
+            "args": [
+              "-c",
+              "sleep 300000000"
+            ],
+            "resources": {
+              "limits": {
+                "cpu": "10m",
+                "memory": "50Mi"
+              },
+              "requests": {
+                "cpu": "10m",
+                "memory": "50Mi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "default-token-tlgw7",
+                "readOnly": true,
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount"
+              }
+            ],
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "imagePullPolicy": "Always"
+          }
+        ],
+        "restartPolicy": "Always",
+        "terminationGracePeriodSeconds": 30,
+        "dnsPolicy": "ClusterFirst",
+        "serviceAccountName": "default",
+        "serviceAccount": "default",
+        "nodeName": "ip-192-168-67-127.us-west-2.compute.internal",
+        "securityContext": {
+        },
+        "schedulerName": "default-scheduler",
+        "tolerations": [
+          {
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "effect": "NoExecute",
+            "tolerationSeconds": 300
+          },
+          {
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "effect": "NoExecute",
+            "tolerationSeconds": 300
+          }
+        ],
+        "priority": 0
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Initialized",
+            "status": "True",
+            "lastProbeTime": null,
+            "lastTransitionTime": "2019-02-06T16:51:34Z"
+          },
+          {
+            "type": "Ready",
+            "status": "True",
+            "lastProbeTime": null,
+            "lastTransitionTime": "2019-02-06T16:51:43Z"
+          },
+          {
+            "type": "ContainersReady",
+            "status": "True",
+            "lastProbeTime": null,
+            "lastTransitionTime": null
+          },
+          {
+            "type": "PodScheduled",
+            "status": "True",
+            "lastProbeTime": null,
+            "lastTransitionTime": "2019-02-06T16:51:34Z"
+          }
+        ],
+        "hostIP": "192.168.67.127",
+        "podIP": "192.168.76.93",
+        "startTime": "2019-02-06T16:51:34Z",
+        "containerStatuses": [
+          {
+            "name": "ubuntu",
+            "state": {
+              "running": {
+                "startedAt": "2019-02-06T16:51:42Z"
+              }
+            },
+            "lastState": {
+            },
+            "ready": true,
+            "restartCount": 0,
+            "image": "ubuntu:latest",
+            "imageID": "docker-pullable://ubuntu@sha256:7a47ccc3bbe8a451b500d2b53104868b46d60ee8f5b35a24b41a86077c650210",
+            "containerID": "docker://637631e2634ea92c0c1aa5d24734cfe794f09c57933026592c12acafbaf6972c"
+          }
+        ],
+        "qosClass": "Guaranteed"
+      }
+    }
+  ]
+}`
+	pods := corev1.PodList{}
+	err := json.Unmarshal([]byte(podJSON), &pods)
+	if err != nil {
+		panic(fmt.Sprintf("unmarshal pod err %v", err))
+	}
+
+	return &pods.Items[0]
+}
+
 func getPodStore() *PodStore {
 	nodeInfo := newNodeInfo("testNode1", &mockNodeInfoProvider{}, zap.NewNop())
 	nodeInfo.setCPUCapacity(4000)
@@ -465,11 +681,11 @@ func TestPodStore_decorateCpu(t *testing.T) {
 	assert.Equal(t, float64(10), metric.GetField("container_cpu_utilization_over_container_limit").(float64))
 }
 
-func TestPodStore_decorateCpu_WithInitContainersAndPodOverhead(t *testing.T) {
+func TestPodStore_decorateCpu_WithInitAndSideCarContainersAndPodOverhead(t *testing.T) {
 	podStore := getPodStore()
 	defer require.NoError(t, podStore.Shutdown())
 
-	pod := getInitContainerBaseTestPodInfo()
+	pod := getInitAndSideCarContainerTestPodInfo()
 
 	pod.Spec.Overhead = make(corev1.ResourceList)
 	pod.Spec.Overhead[corev1.ResourceCPU] = *resource.NewQuantity(5, resource.DecimalSI)
@@ -485,6 +701,63 @@ func TestPodStore_decorateCpu_WithInitContainersAndPodOverhead(t *testing.T) {
 	assert.Equal(t, uint64(25), metric.GetField("pod_cpu_limit").(uint64))
 	assert.Equal(t, 0.625, metric.GetField("pod_cpu_reserved_capacity").(float64))
 	assert.Equal(t, float64(4), metric.GetField("pod_cpu_utilization_over_pod_limit").(float64))
+	assert.Equal(t, float64(1), metric.GetField("pod_cpu_usage_total").(float64))
+
+	// test Side car container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper1"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.CPUTotal): float64(1)}
+	metric = generateMetric(fields, tags)
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, uint64(5), metric.GetField("container_cpu_request").(uint64))
+	assert.Equal(t, uint64(5), metric.GetField("container_cpu_limit").(uint64))
+	assert.Equal(t, float64(1), metric.GetField("container_cpu_usage_total").(float64))
+	assert.False(t, metric.HasField("container_cpu_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, float64(20), metric.GetField("container_cpu_utilization_over_container_limit").(float64))
+
+	// test init container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper2"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.CPUTotal): float64(3)}
+
+	podStore.includeEnhancedMetrics = false
+	metric = generateMetric(fields, tags)
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, uint64(15), metric.GetField("container_cpu_request").(uint64))
+	assert.Equal(t, uint64(15), metric.GetField("container_cpu_limit").(uint64))
+	assert.Equal(t, float64(3), metric.GetField("container_cpu_usage_total").(float64))
+	assert.False(t, metric.HasField("container_cpu_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, float64(20), metric.GetField("container_cpu_utilization_over_container_limit").(float64))
+}
+
+func TestPodStore_decorateCpu_WithInitWithoutSideCarContainersAndPodOverhead(t *testing.T) {
+	podStore := getPodStore()
+	defer require.NoError(t, podStore.Shutdown())
+
+	pod := getInitWithoutSideCarContainerPodInfo()
+
+	pod.Spec.Overhead = make(corev1.ResourceList)
+	pod.Spec.Overhead[corev1.ResourceCPU] = *resource.NewQuantity(5, resource.DecimalSI)
+
+	// test pod metrics
+	tags := map[string]string{ci.MetricType: ci.TypePod}
+	fields := map[string]interface{}{ci.MetricName(ci.TypePod, ci.CPUTotal): float64(1)}
+
+	metric := generateMetric(fields, tags)
+	podStore.decorateCPU(metric, pod)
+
+	assert.Equal(t, uint64(20), metric.GetField("pod_cpu_request").(uint64))
+	assert.Equal(t, uint64(20), metric.GetField("pod_cpu_limit").(uint64))
+	assert.Equal(t, 0.5, metric.GetField("pod_cpu_reserved_capacity").(float64))
+	assert.Equal(t, float64(5), metric.GetField("pod_cpu_utilization_over_pod_limit").(float64))
 	assert.Equal(t, float64(1), metric.GetField("pod_cpu_usage_total").(float64))
 
 	// test Side car container metrics
@@ -556,10 +829,10 @@ func TestPodStore_decorateMem(t *testing.T) {
 	assert.Equal(t, float64(20), metric.GetField("container_memory_utilization_over_container_limit").(float64))
 }
 
-func TestPodStore_decorateMem_WithInitContainersAndPodOverhead(t *testing.T) {
+func TestPodStore_decorateMem_WithInitAndSideCarContainersAndPodOverhead(t *testing.T) {
 	podStore := getPodStore()
 	defer require.NoError(t, podStore.Shutdown())
-	pod := getInitContainerBaseTestPodInfo()
+	pod := getInitAndSideCarContainerTestPodInfo()
 
 	pod.Spec.Overhead = make(corev1.ResourceList)
 	pod.Spec.Overhead[corev1.ResourceMemory] = *resource.NewQuantity(5*1024*1024, resource.BinarySI)
@@ -610,6 +883,63 @@ func TestPodStore_decorateMem_WithInitContainersAndPodOverhead(t *testing.T) {
 	podStore.decorateMem(metric, pod)
 
 	assert.Equal(t, float64(40), metric.GetField("container_memory_utilization_over_container_limit").(float64))
+
+}
+
+func TestPodStore_decorateMem_WithInitWithoutSideCarContainersAndPodOverhead(t *testing.T) {
+	podStore := getPodStore()
+	defer require.NoError(t, podStore.Shutdown())
+	pod := getInitWithoutSideCarContainerPodInfo()
+
+	pod.Spec.Overhead = make(corev1.ResourceList)
+	pod.Spec.Overhead[corev1.ResourceMemory] = *resource.NewQuantity(5*1024*1024, resource.BinarySI)
+
+	tags := map[string]string{ci.MetricType: ci.TypePod}
+	fields := map[string]interface{}{ci.MetricName(ci.TypePod, ci.MemWorkingset): uint64(10 * 1024 * 1024)}
+
+	metric := generateMetric(fields, tags)
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, uint64(83886080), metric.GetField("pod_memory_request").(uint64))
+	assert.Equal(t, uint64(83886080), metric.GetField("pod_memory_limit").(uint64))
+	assert.Equal(t, float64(20), metric.GetField("pod_memory_reserved_capacity").(float64))
+	assert.Equal(t, 12.5, metric.GetField("pod_memory_utilization_over_pod_limit").(float64))
+	assert.Equal(t, uint64(10*1024*1024), metric.GetField("pod_memory_working_set").(uint64))
+
+	//Test Side Car Container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper1"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.MemWorkingset): uint64(10 * 1024 * 1024)}
+
+	metric = generateMetric(fields, tags)
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, uint64(52428800), metric.GetField("container_memory_request").(uint64))
+	assert.Equal(t, uint64(52428800), metric.GetField("container_memory_limit").(uint64))
+	assert.Equal(t, uint64(10*1024*1024), metric.GetField("container_memory_working_set").(uint64))
+	assert.False(t, metric.HasField("container_memory_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, float64(20), metric.GetField("container_memory_utilization_over_container_limit").(float64))
+
+	// test init container metrics
+	tags = map[string]string{ci.MetricType: ci.TypeContainer, ci.ContainerNamekey: "logshipper2"}
+	fields = map[string]any{ci.MetricName(ci.TypeContainer, ci.MemWorkingset): uint64(10 * 1024 * 1024)}
+
+	podStore.includeEnhancedMetrics = false
+	metric = generateMetric(fields, tags)
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, uint64(78643200), metric.GetField("container_memory_request").(uint64))
+	assert.Equal(t, uint64(78643200), metric.GetField("container_memory_limit").(uint64))
+	assert.Equal(t, uint64(10*1024*1024), metric.GetField("container_memory_working_set").(uint64))
+	assert.False(t, metric.HasField("container_memory_utilization_over_container_limit"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateMem(metric, pod)
+
+	assert.Equal(t, 13.333333333333334, metric.GetField("container_memory_utilization_over_container_limit").(float64))
 
 }
 
@@ -1276,6 +1606,62 @@ func TestPodStore_decorateNode(t *testing.T) {
 
 	assert.Equal(t, int(1), metric.GetField("node_number_of_running_containers").(int))
 	assert.Equal(t, int(1), metric.GetField("node_number_of_running_pods").(int))
+
+	assert.False(t, metric.HasField("node_status_condition_ready"))
+	assert.False(t, metric.HasField("node_status_condition_disk_pressure"))
+	assert.False(t, metric.HasField("node_status_condition_memory_pressure"))
+	assert.False(t, metric.HasField("node_status_condition_pid_pressure"))
+	assert.False(t, metric.HasField("node_status_condition_network_unavailable"))
+	assert.False(t, metric.HasField("node_status_condition_unknown"))
+
+	assert.False(t, metric.HasField("node_status_capacity_pods"))
+	assert.False(t, metric.HasField("node_status_allocatable_pods"))
+
+	podStore.includeEnhancedMetrics = true
+	podStore.decorateNode(metric)
+
+	assert.Equal(t, uint64(1), metric.GetField("node_status_condition_ready").(uint64))
+	assert.Equal(t, uint64(0), metric.GetField("node_status_condition_disk_pressure").(uint64))
+	assert.Equal(t, uint64(0), metric.GetField("node_status_condition_memory_pressure").(uint64))
+	assert.Equal(t, uint64(0), metric.GetField("node_status_condition_pid_pressure").(uint64))
+	assert.Equal(t, uint64(0), metric.GetField("node_status_condition_network_unavailable").(uint64))
+	assert.Equal(t, uint64(1), metric.GetField("node_status_condition_unknown").(uint64))
+
+	assert.Equal(t, uint64(5), metric.GetField("node_status_capacity_pods").(uint64))
+	assert.Equal(t, uint64(15), metric.GetField("node_status_allocatable_pods").(uint64))
+}
+
+func TestPodStore_decorateNode_WithInitAndSideCarContainers(t *testing.T) {
+	t.Setenv("HOST_NAME", "testNode1")
+	pod := getInitAndSideCarContainerTestPodInfo()
+	podList := []corev1.Pod{*pod}
+	podStore := getPodStore()
+	defer require.NoError(t, podStore.Shutdown())
+	podStore.refreshInternal(time.Now(), podList)
+
+	tags := map[string]string{ci.MetricType: ci.TypeNode}
+	fields := map[string]any{
+		ci.MetricName(ci.TypeNode, ci.CPUTotal):      float64(100),
+		ci.MetricName(ci.TypeNode, ci.CPULimit):      uint64(4000),
+		ci.MetricName(ci.TypeNode, ci.MemWorkingset): float64(100 * 1024 * 1024),
+		ci.MetricName(ci.TypeNode, ci.MemLimit):      uint64(400 * 1024 * 1024),
+	}
+
+	metric := generateMetric(fields, tags)
+	podStore.decorateNode(metric)
+
+	assert.Equal(t, uint64(20), metric.GetField("node_cpu_request").(uint64))
+	assert.Equal(t, uint64(4000), metric.GetField("node_cpu_limit").(uint64))
+	assert.Equal(t, float64(0.5), metric.GetField("node_cpu_reserved_capacity").(float64))
+	assert.Equal(t, float64(100), metric.GetField("node_cpu_usage_total").(float64))
+
+	assert.Equal(t, uint64(100*1024*1024), metric.GetField("node_memory_request").(uint64))
+	assert.Equal(t, uint64(400*1024*1024), metric.GetField("node_memory_limit").(uint64))
+	assert.Equal(t, float64(25), metric.GetField("node_memory_reserved_capacity").(float64))
+	assert.Equal(t, float64(100*1024*1024), metric.GetField("node_memory_working_set").(float64))
+
+	assert.Equal(t, 1, metric.GetField("node_number_of_running_containers").(int))
+	assert.Equal(t, 1, metric.GetField("node_number_of_running_pods").(int))
 
 	assert.False(t, metric.HasField("node_status_condition_ready"))
 	assert.False(t, metric.HasField("node_status_condition_disk_pressure"))
